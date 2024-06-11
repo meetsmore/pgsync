@@ -1129,7 +1129,7 @@ class Sync(Base, metaclass=Singleton):
                 notification: AnyStr = conn.notifies.pop(0)
                 if notification.channel == self.database:
                     payload = json.loads(notification.payload)
-                    if self.index in payload["indices"]:
+                    if payload["indices"] and self.index in payload["indices"]:
                         payloads.append(payload)
                         logger.debug(f"on_notify: {payload}")
                         self.count["db"] += 1
@@ -1151,7 +1151,7 @@ class Sync(Base, metaclass=Singleton):
             notification: AnyStr = self.conn.notifies.pop(0)
             if notification.channel == self.database:
                 payload = json.loads(notification.payload)
-                if self.index in payload["indices"]:
+                if payload["indices"] and self.index in payload["indices"]:
                     self.redis.push([payload])
                     logger.debug(f"on_notify: {payload}")
                     self.count["db"] += 1
