@@ -85,7 +85,11 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 """
-        assert CREATE_TRIGGER_TEMPLATE == expected
+        actual = CREATE_TRIGGER_TEMPLATE.format(
+            materialized_view="_view",
+            trigger_func="table_notify",
+        )
+        assert actual == expected
 
     def test_trigger_primary_key_function(self, connection):
         tables = {

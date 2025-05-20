@@ -4,6 +4,7 @@ import os
 from collections import namedtuple
 from typing import List
 
+from pgsync.constants import DEFAULT_SCHEMA
 import pytest
 from mock import ANY, call, patch
 

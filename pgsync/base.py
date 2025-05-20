@@ -129,7 +129,7 @@ class TupleIdentifierType(sa.types.UserDefinedType):
 
 class Base(object):
     def __init__(
-        self, database: str, verbose: bool = False, *args, **kwargs
+        self, database: str, verbose: bool = False, namespace: str = None, *args, **kwargs
     ) -> None:
         """Initialize the base class constructor."""
         self.__engine: sa.engine.Engine = _pg_engine(
@@ -146,6 +146,7 @@ class Base(object):
         self.__columns: dict = {}
         self.verbose: bool = verbose
         self._conn = None
+        self.namespace = namespace
 
     def connect(self) -> None:
         """Connect to database."""
@@ -521,6 +522,13 @@ class Base(object):
             ).scalar()
 
     # Views...
+    @property
+    def materialized_view_name(self) -> str:
+        """Get the materialized view name with optional namespace prefix."""
+        if self.namespace:
+            return f"_{self.namespace}{MATERIALIZED_VIEW}"
+        return MATERIALIZED_VIEW
+
     def create_view(
         self,
         index: str,
@@ -537,13 +545,22 @@ class Base(object):
             tables,
             user_defined_fkey_tables,
             self._materialized_views(schema),
+            self.materialized_view_name,
         )
+
+        # Clear materialized views cache
+        if schema in self.__materialized_views:
+            del self.__materialized_views[schema]
 
     def drop_view(self, schema: str) -> None:
         """Drop a view."""
-        logger.debug(f"Dropping view: {schema}.{MATERIALIZED_VIEW}")
-        self.engine.execute(DropView(schema, MATERIALIZED_VIEW))
-        logger.debug(f"Dropped view: {schema}.{MATERIALIZED_VIEW}")
+        logger.debug(f"Dropping view: {schema}.{self.materialized_view_name}")
+        self.engine.execute(DropView(schema, self.materialized_view_name))
+        logger.debug(f"Dropped view: {schema}.{self.materialized_view_name}")
+
+        # Clear materialized views cache
+        if schema in self.__materialized_views:
+            del self.__materialized_views[schema]
 
     def refresh_view(
         self, name: str, schema: str, concurrently: bool = False
@@ -614,12 +631,9 @@ class Base(object):
 
     def create_function(self, schema: str) -> None:
         self.execute(
-            CREATE_TRIGGER_TEMPLATE.replace(
-                MATERIALIZED_VIEW,
-                f"{schema}.{MATERIALIZED_VIEW}",
-            ).replace(
-                TRIGGER_FUNC,
-                f"{schema}.{TRIGGER_FUNC}",
+            CREATE_TRIGGER_TEMPLATE.format(
+                materialized_view=f"{schema}.{self.materialized_view_name}",
+                trigger_func=f"{schema}.{TRIGGER_FUNC}",
             )
         )
 

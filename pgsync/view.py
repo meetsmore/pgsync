@@ -10,7 +10,7 @@ from sqlalchemy.ext import compiler
 from sqlalchemy.schema import DDLElement
 from sqlalchemy.sql.selectable import Select
 
-from .constants import DEFAULT_SCHEMA, MATERIALIZED_VIEW
+from .constants import DEFAULT_SCHEMA
 
 logger = logging.getLogger(__name__)
 
@@ -199,6 +199,7 @@ def create_view(
     tables: Set,
     user_defined_fkey_tables: dict,
     views: List[str],
+    view_name: str,
 ) -> None:
     """
     View describing primary_keys and foreign_keys for each table
@@ -224,10 +225,10 @@ def create_view(
     """
 
     rows: dict = {}
-    if MATERIALIZED_VIEW in views:
+    if view_name in views:
         for table_name, primary_keys, foreign_keys, indices in fetchall(
             sa.select(["*"]).select_from(
-                sa.text(f"{schema}.{MATERIALIZED_VIEW}")
+                sa.text(f"{schema}.{view_name}")
             )
         ):
             rows.setdefault(
@@ -245,7 +246,7 @@ def create_view(
             if indices:
                 rows[table_name]["indices"] = set(indices)
 
-        engine.execute(DropView(schema, MATERIALIZED_VIEW))
+        engine.execute(DropView(schema, view_name))
 
     if schema != DEFAULT_SCHEMA:
         for table in set(tables):
@@ -315,18 +316,18 @@ def create_view(
         )
         .alias("t")
     )
-    logger.debug(f"Creating view: {schema}.{MATERIALIZED_VIEW}")
-    engine.execute(CreateView(schema, MATERIALIZED_VIEW, statement))
+    logger.debug(f"Creating view: {schema}.{view_name}")
+    engine.execute(CreateView(schema, view_name, statement))
     engine.execute(DropIndex("_idx"))
     engine.execute(
         CreateIndex(
             "_idx",
             schema,
-            MATERIALIZED_VIEW,
+            view_name,
             ["table_name"],
         )
     )
-    logger.debug(f"Created view: {schema}.{MATERIALIZED_VIEW}")
+    logger.debug(f"Created view: {schema}.{view_name}")
 
 
 def is_view(

@@ -560,3 +560,37 @@ class TestBase(object):
         )
 
         _pg_engine("mydb", sslmode="allow", sslrootcert=__file__)
+
+    def test_create_view_with_namespace(self, connection):
+        """Test creating view with namespace."""
+        pg_base = Base(connection.engine.url.database, namespace="test")
+        pg_base.create_view(
+            "testdb",
+            DEFAULT_SCHEMA,
+            {"book"},
+            {},
+        )
+        assert "_test_view" in pg_base._materialized_views(DEFAULT_SCHEMA)
+        pg_base.drop_view(DEFAULT_SCHEMA)
+
+    def test_drop_view_with_namespace(self, connection):
+        """Test dropping view with namespace."""
+        pg_base = Base(connection.engine.url.database, namespace="test")
+        pg_base.create_view(
+            "testdb",
+            DEFAULT_SCHEMA,
+            {"book"},
+            {},
+        )
+        pg_base.drop_view(DEFAULT_SCHEMA)
+        assert "_test_view" not in pg_base._materialized_views(DEFAULT_SCHEMA)
+
+    def test_create_function_with_namespace(self, connection):
+        """Test creating function with namespace."""
+        pg_base = Base(connection.engine.url.database, namespace="test")
+        with patch("pgsync.base.Base.execute") as mock_execute:
+            pg_base.create_function(DEFAULT_SCHEMA)
+            mock_execute.assert_called_once()
+            # Verify the materialized view name in the function
+            call_args = mock_execute.call_args[0][0]
+            assert f"{DEFAULT_SCHEMA}._test_view" in str(call_args)

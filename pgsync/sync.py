@@ -22,7 +22,6 @@ from .base import Base, Payload
 from .constants import (
     DELETE,
     INSERT,
-    MATERIALIZED_VIEW,
     MATERIALIZED_VIEW_COLUMNS,
     META,
     PRIMARY_KEY_DELIMITER,
@@ -170,13 +169,13 @@ class Sync(Base, metaclass=Singleton):
 
         for node in self.tree.traverse_breadth_first():
             # ensure internal materialized view compatibility
-            if MATERIALIZED_VIEW in self._materialized_views(node.schema):
+            if self.materialized_view_name in self._materialized_views(node.schema):
                 if MATERIALIZED_VIEW_COLUMNS != self.columns(
-                    node.schema, MATERIALIZED_VIEW
+                    node.schema, self.materialized_view_name
                 ):
                     raise RuntimeError(
                         f"Required materialized view columns not present on "
-                        f"{MATERIALIZED_VIEW}. Please re-run bootstrap."
+                        f"{self.materialized_view_name}. Please re-run bootstrap."
                     )
 
             if node.schema not in self.schemas:
@@ -1365,6 +1364,10 @@ class Sync(Base, metaclass=Singleton):
     type=int,
     default=settings.NTHREADS_POLLDB,
 )
+@click.option(
+    "--namespace",
+    help="Namespace for materialized views",
+)
 def main(
     config,
     daemon,
@@ -1379,6 +1382,7 @@ def main(
     analyze,
     nthreads_polldb,
     polling,
+    namespace,
 ):
     """Main application syncer."""
     if version:
@@ -1391,6 +1395,7 @@ def main(
         "port": port,
         "sslmode": sslmode,
         "sslrootcert": sslrootcert,
+        "namespace": namespace,
     }
     if password:
         kwargs["password"] = click.prompt(

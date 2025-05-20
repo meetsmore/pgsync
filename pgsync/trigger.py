@@ -1,8 +1,7 @@
 """PGSync Trigger template."""
-from .constants import MATERIALIZED_VIEW, TRIGGER_FUNC
 
-CREATE_TRIGGER_TEMPLATE = f"""
-CREATE OR REPLACE FUNCTION {TRIGGER_FUNC}() RETURNS TRIGGER AS $$
+CREATE_TRIGGER_TEMPLATE = """
+CREATE OR REPLACE FUNCTION {trigger_func}() RETURNS TRIGGER AS $$
 DECLARE
   channel TEXT;
   old_row JSON;
@@ -21,7 +20,7 @@ BEGIN
 
         SELECT primary_keys, indices
         INTO _primary_keys, _indices
-        FROM {MATERIALIZED_VIEW}
+        FROM {materialized_view}
         WHERE table_name = TG_TABLE_NAME;
 
         old_row = ROW_TO_JSON(OLD);
@@ -36,7 +35,7 @@ BEGIN
 
             SELECT primary_keys, foreign_keys, indices
             INTO _primary_keys, _foreign_keys, _indices
-            FROM {MATERIALIZED_VIEW}
+            FROM {materialized_view}
             WHERE table_name = TG_TABLE_NAME;
 
             new_row = ROW_TO_JSON(NEW);
