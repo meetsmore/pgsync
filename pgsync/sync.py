@@ -64,6 +64,17 @@ from .utils import (
 
 TX_BOUNDARY_RE = re.compile(r"^(BEGIN|COMMIT)\s+(\d+)", re.IGNORECASE)
 
+# Logical decoding messages emitted via pg_logical_emit_message (e.g. CDC
+# heartbeats from tools like Datastream). These are non-DML records and must
+# be ignored rather than parsed as row changes. The transactional flag tells
+# us whether the message is wrapped in a BEGIN/COMMIT (transactional: 1) or
+# emitted standalone (transactional: 0); standalone messages have no COMMIT to
+# ACK their LSN, so we must acknowledge them explicitly.
+LOGICAL_MSG_RE = re.compile(
+    r"^message:(?:\s+transactional:\s+(?P<transactional>[01]))?\s",
+    re.IGNORECASE,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -480,7 +491,9 @@ class Sync(Base, metaclass=Singleton):
             # parse and filter out BEGIN/COMMIT and unwanted schemas
             payloads: t.List[Payload] = []
             for row in raw:
-                if TX_BOUNDARY_RE.match(row.data):
+                if TX_BOUNDARY_RE.match(row.data) or LOGICAL_MSG_RE.match(
+                    row.data
+                ):
                     continue
                 try:
                     payload: Payload = self.parse_logical_slot(row.data)

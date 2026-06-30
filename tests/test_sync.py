@@ -196,6 +196,51 @@ class TestSync(object):
                             sync.logical_slot_changes()
             assert "Error parsing row" in str(excinfo.value)
 
+    @patch("pgsync.sync.logger")
+    def test_logical_slot_changes_skips_heartbeat(self, mock_logger, sync):
+        """Regression: CDC heartbeat rows must not reach parse_logical_slot.
+
+        Reproduces the reported SQL peek/pull path (logical_slot_changes),
+        where a logical decoding message (e.g. Datastream heartbeat) used to
+        raise LogicalSlotParseError. The heartbeat must be filtered out before
+        parse_logical_slot is ever called, while the surrounding INSERT row is
+        still parsed normally.
+        """
+        heartbeat: str = (
+            "message: transactional: 1 prefix: datastream, "
+            "sz: 13 content:cdc heartbeat"
+        )
+        insert: str = (
+            "table public.book: INSERT: id[integer]:10 isbn[character "
+            "varying]:'888' title[character varying]:'My book title' "
+            "description[character varying]:null copyright[character "
+            "varying]:null tags[jsonb]:null publisher_id[integer]:null"
+        )
+        with patch("pgsync.sync.Sync.logical_slot_peek_changes") as mock_peek:
+            mock_peek.side_effect = [
+                [
+                    ROW("BEGIN 72736", 72736),
+                    ROW(heartbeat, 72736),
+                    ROW(insert, 72736),
+                    ROW("COMMIT 72736", 72736),
+                ],
+                [],
+            ]
+            with patch("pgsync.sync.Sync.logical_slot_get_changes"):
+                with patch("pgsync.sync.Sync.sync"):
+                    with patch(
+                        "pgsync.sync.Sync.parse_logical_slot",
+                        wraps=sync.parse_logical_slot,
+                    ) as spy_parse:
+                        # Must not raise LogicalSlotParseError on the heartbeat
+                        sync.logical_slot_changes()
+
+        parsed_rows: t.List[str] = [
+            c.args[0] for c in spy_parse.call_args_list
+        ]
+        assert heartbeat not in parsed_rows
+        assert insert in parsed_rows
+
     @patch("pgsync.sync.SearchClient.bulk")
     @patch("pgsync.sync.logger")
     def test_logical_slot_changes_groups(
