@@ -107,6 +107,29 @@ class TestSync(object):
             mock_peek.side_effect = [
                 [
                     ROW(
+                        "message: transactional: 1 prefix: heartbeat, sz: 29 "  # noqa E501
+                        "content:2026-06-22 09:29:59.469543+00",
+                        1234,
+                    ),
+                ],
+                [],
+            ]
+            with patch("pgsync.sync.Sync.sync") as mock_sync:
+                sync.logical_slot_changes()
+                mock_peek.assert_any_call(
+                    "testdb_testdb",
+                    txmin=None,
+                    txmax=None,
+                    upto_nchanges=None,
+                    limit=settings.LOGICAL_SLOT_CHUNK_SIZE,
+                    offset=0,
+                )
+                mock_sync.assert_not_called()
+
+        with patch("pgsync.sync.Sync.logical_slot_peek_changes") as mock_peek:
+            mock_peek.side_effect = [
+                [
+                    ROW(
                         "table public.book: INSERT: id[integer]:10 isbn[character "  # noqa E501
                         "varying]:'888' title[character varying]:'My book title' "  # noqa E501
                         "description[character varying]:null copyright[character "  # noqa E501

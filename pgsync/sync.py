@@ -57,6 +57,17 @@ from .utils import (
     Timer,
 )
 
+# Logical decoding messages emitted via pg_logical_emit_message (e.g. CDC
+# heartbeats from tools like Datastream). These are non-DML records and must
+# be ignored rather than parsed as row changes. The transactional flag tells
+# us whether the message is wrapped in a BEGIN/COMMIT (transactional: 1) or
+# emitted standalone (transactional: 0); standalone messages have no COMMIT to
+# ACK their LSN, so we must acknowledge them explicitly.
+LOGICAL_MSG_RE = re.compile(
+    r"^message:(?:\s+transactional:\s+(?P<transactional>[01]))?\s",
+    re.IGNORECASE,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -392,8 +403,10 @@ class Sync(Base, metaclass=Singleton):
 
             rows: list = []
             for row in changes:
-                if re.search(r"^BEGIN", row.data) or re.search(
-                    r"^COMMIT", row.data
+                if (
+                    re.search(r"^BEGIN", row.data)
+                    or re.search(r"^COMMIT", row.data)
+                    or LOGICAL_MSG_RE.match(row.data)
                 ):
                     continue
                 rows.append(row)
