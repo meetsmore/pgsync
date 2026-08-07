@@ -1,5 +1,6 @@
 """PGSync QueryBuilder."""
 
+import copy
 import threading
 import typing as t
 from collections import defaultdict
@@ -121,7 +122,7 @@ class QueryBuilder(threading.local):
         """
         cache_key: t.Tuple[t.Any, t.Any] = (node_a, node_b)
         if cache_key in self._cache:
-            return self._cache[cache_key]
+            return copy.deepcopy(self._cache[cache_key])
 
         fkeys: t.MutableMapping[str, t.List[str]] = defaultdict(list)
 
@@ -226,7 +227,7 @@ class QueryBuilder(threading.local):
 
         result: t.Dict[str, t.List[str]] = dict(fkeys)
         self._cache[cache_key] = result
-        return result
+        return copy.deepcopy(result)
 
     def _get_foreign_keys(self, node_a: Node, node_b: Node) -> dict:
         """This is for handling through nodes."""
@@ -254,7 +255,7 @@ class QueryBuilder(threading.local):
 
             self._cache[(node_a, node_b)] = foreign_keys
 
-        return self._cache[(node_a, node_b)]
+        return copy.deepcopy(self._cache[(node_a, node_b)])
 
     def _get_column_foreign_keys(
         self,
@@ -284,15 +285,17 @@ class QueryBuilder(threading.local):
         if table is None:
             for table, cols in foreign_keys.items():
                 if set(cols).issubset(set(column_names)):
-                    return foreign_keys[table]
+                    return list(foreign_keys[table])
         else:
             # only return the intersection of columns that match
             if not table.startswith(f"{schema}."):
                 table = f"{schema}.{table}"
-            for i, value in enumerate(foreign_keys[table]):
-                if value not in columns:
-                    foreign_keys[table].pop(i)
-            return foreign_keys[table]
+            column_name_set = set(column_names)
+            return [
+                value
+                for value in foreign_keys[table]
+                if value in column_name_set
+            ]
 
     def _get_child_keys(
         self, node: Node, params: dict
