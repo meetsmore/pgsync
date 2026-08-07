@@ -1,10 +1,96 @@
 """QueryBuilder tests."""
 
+from types import SimpleNamespace
+
 import pytest
+import sqlalchemy as sa
 
 from pgsync.base import Base
 from pgsync.node import Node
 from pgsync.querybuilder import QueryBuilder
+
+
+def test_get_foreign_keys_returns_copy_for_new_and_cached_values():
+    metadata = sa.MetaData()
+    parent = sa.Table(
+        "parent",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        schema="public",
+    )
+    child = sa.Table(
+        "child",
+        metadata,
+        sa.Column("id", sa.Integer, primary_key=True),
+        sa.Column("parent_id", sa.ForeignKey("public.parent.id")),
+        schema="public",
+    )
+    relationship = SimpleNamespace(foreign_key=None)
+
+    class NodeStub:
+        def __init__(self, table):
+            self.model = SimpleNamespace(original=table)
+            self.relationship = relationship
+
+    parent_node = NodeStub(parent)
+    child_node = NodeStub(child)
+    query_builder = QueryBuilder()
+
+    first = query_builder.get_foreign_keys(child_node, parent_node)
+    first["public.child"].clear()
+
+    second = query_builder.get_foreign_keys(child_node, parent_node)
+
+    assert second == {
+        "public.child": ["parent_id"],
+        "public.parent": ["id"],
+    }
+
+
+def test_get_through_foreign_keys_returns_cache_copy():
+    query_builder = QueryBuilder()
+    node_a = object()
+    node_b = object()
+    cache_key = (node_a, node_b)
+    query_builder._cache[cache_key] = {
+        "public.join_table": ["parent_id", "child_id"]
+    }
+
+    first = query_builder._get_foreign_keys(node_a, node_b)
+    first["public.join_table"].clear()
+
+    second = query_builder._get_foreign_keys(node_a, node_b)
+
+    assert second == {"public.join_table": ["parent_id", "child_id"]}
+
+
+def test_get_column_foreign_keys_does_not_mutate_input():
+    query_builder = QueryBuilder()
+    foreign_keys = {
+        "public.join_table": ["A", "B", "X", "Y"],
+    }
+
+    result = query_builder._get_column_foreign_keys(
+        ["B"],
+        foreign_keys,
+        table="join_table",
+        schema="public",
+    )
+
+    assert result == ["B"]
+    assert foreign_keys == {
+        "public.join_table": ["A", "B", "X", "Y"],
+    }
+
+    unscoped_result = query_builder._get_column_foreign_keys(
+        ["A", "B", "X", "Y"],
+        foreign_keys,
+    )
+    unscoped_result.clear()
+
+    assert foreign_keys == {
+        "public.join_table": ["A", "B", "X", "Y"],
+    }
 
 
 @pytest.mark.usefixtures("table_creator")
