@@ -1,0 +1,22 @@
+tests/test_query_builder.py
+  s_bc5f94b5317eed::t_b3cd80d804b40c 29-36,83-92
+  s_bc5f94b5317eed::t_b42dc1402e02ad 3-4,6,13-28,37-82,93-95
+pgsync/querybuilder.py
+  s_bc5f94b5317eed::t_b42dc1402e02ad 3,125,230,258,288,293-298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.21",
+  "base_commit_sha": "30ef0306e335888148a6f1a1185d84359c8e66b2",
+  "prompts": {},
+  "sessions": {
+    "s_bc5f94b5317eed": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019fd5a5-fd6f-71d0-9110-d0d417d4e5dc",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "aoki hayato <mossanaoki@gmail.com>"
+    }
+  }
+}
