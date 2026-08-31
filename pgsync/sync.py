@@ -1,16 +1,19 @@
 """Sync module."""
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
 import pprint
 import re
 import select
+import stat
 import sys
 import threading
 import time
 import typing as t
+import uuid
 from collections import defaultdict
 from itertools import groupby
 from pathlib import Path
@@ -35,6 +38,7 @@ from .constants import (
     UPDATE,
 )
 from .exc import (
+    CheckpointError,
     ForeignKeyError,
     InvalidSchemaError,
     InvalidTGOPError,
@@ -1248,6 +1252,84 @@ class Sync(Base, metaclass=Singleton):
 
             yield doc
 
+    def _heal_checkpoint_file(self) -> int:
+        """
+        Recover a corrupt checkpoint file from the replication slot.
+
+        :return: The healed checkpoint value.
+        :rtype: int
+        :raises CheckpointError: If the slot cannot be peeked or has no
+            pending changes to derive a checkpoint from.
+        """
+        logger.warning(
+            f"Corrupt checkpoint file: {self.checkpoint_file}. "
+            f"Attempting to heal it from replication slot "
+            f'"{self.slot_name}".'
+        )
+
+        rows: t.List[sa.engine.row.Row]
+        try:
+            rows = self.logical_slot_peek_changes(self.slot_name, limit=1)
+        except Exception as e:
+            logger.exception(
+                f"Cannot heal corrupt checkpoint file "
+                f"{self.checkpoint_file}: peeking replication slot "
+                f'"{self.slot_name}" failed: {e}'
+            )
+
+            # Error instead of attempting a full re-sync
+            raise CheckpointError(
+                f"Cannot heal corrupt checkpoint file "
+                f"{self.checkpoint_file}: peeking replication slot "
+                f'"{self.slot_name}" failed: {e}'
+            ) from e
+
+        if not rows:
+            logger.error(
+                f"Cannot heal corrupt checkpoint file "
+                f"{self.checkpoint_file}: replication slot "
+                f'"{self.slot_name}" has no pending changes to derive a '
+                f"checkpoint from. Set the checkpoint manually before "
+                f"restarting."
+            )
+            raise CheckpointError(
+                f"Cannot heal corrupt checkpoint file "
+                f"{self.checkpoint_file}: replication slot "
+                f'"{self.slot_name}" has no pending changes.'
+            )
+
+        xid: int = int(rows[0].xid)
+        checkpoint: int = xid - 1
+        logger.warning(
+            f"Healing checkpoint file {self.checkpoint_file}: oldest "
+            f'pending xid in replication slot "{self.slot_name}" is '
+            f"{xid}, resuming from checkpoint {checkpoint}."
+        )
+
+        self.checkpoint = checkpoint
+        return checkpoint
+
+    def _read_checkpoint_file(self) -> t.Optional[str]:
+        """
+        Read the raw checkpoint value from the checkpoint file.
+
+        A missing file means no checkpoint, which is a legitimate first
+        run. An empty or whitespace-only file is corrupt and gets healed
+        from the replication slot rather than treated as a first run.
+
+        :return: The raw checkpoint value or None if there is none.
+        :rtype: str or None
+        """
+        path: Path = Path(self.checkpoint_file)
+        if not path.exists():
+            return None
+
+        content: str = path.read_text(encoding="utf-8").strip()
+        if not content:
+            return str(self._heal_checkpoint_file())
+
+        return content.split()[0]
+
     @property
     def checkpoint(self) -> int:
         """
@@ -1260,12 +1342,7 @@ class Sync(Base, metaclass=Singleton):
         if settings.REDIS_CHECKPOINT:
             raw = self.redis.get_meta(default={}).get("checkpoint")
         else:
-            path: Path = Path(self.checkpoint_file)
-            raw = (
-                path.read_text(encoding="utf-8").split()[0]
-                if path.exists()
-                else None
-            )
+            raw = self._read_checkpoint_file()
 
         if raw is None:
             return None
@@ -1282,6 +1359,12 @@ class Sync(Base, metaclass=Singleton):
         """
         Sets the checkpoint value.
 
+        The file is written to a temporary path and renamed over the
+        target rather than truncated in place. POSIX requires rename(2)
+        to be atomic, so a process killed mid-write leaves either the
+        previous checkpoint or the new one behind and never a truncated
+        or empty file.
+
         :param value: The new checkpoint value.
         :type value: Optional[str]
         :raises TypeError: If the value is None.
@@ -1292,9 +1375,21 @@ class Sync(Base, metaclass=Singleton):
         if settings.REDIS_CHECKPOINT:
             self.redis.set_meta({"checkpoint": value})
         else:
-            Path(self.checkpoint_file).write_text(
-                f"{value}\n", encoding="utf-8"
-            )
+            path: Path = Path(self.checkpoint_file)
+            tmp: Path = Path(f"{path}.{uuid.uuid4().hex}.tmp")
+            mode: t.Optional[int] = None
+            
+            with contextlib.suppress(OSError):
+                mode = stat.S_IMODE(path.stat().st_mode)
+            try:
+                tmp.write_text(f"{value}\n", encoding="utf-8")
+                if mode is not None:
+                    os.chmod(tmp, mode)
+                os.replace(tmp, path)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    tmp.unlink()
+                raise
 
         # Update in-memory cache last
         self._checkpoint = value
