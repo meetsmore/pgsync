@@ -1269,7 +1269,9 @@ class Sync(Base, metaclass=Singleton):
 
         rows: t.List[sa.engine.row.Row]
         try:
-            rows = self.logical_slot_peek_changes(self.slot_name, limit=1)
+            rows = self.logical_slot_peek_changes(
+                self.slot_name, upto_nchanges=1, limit=1
+            )
         except Exception as e:
             logger.exception(
                 f"Cannot heal corrupt checkpoint file "
@@ -1378,7 +1380,7 @@ class Sync(Base, metaclass=Singleton):
             path: Path = Path(self.checkpoint_file)
             tmp: Path = Path(f"{path}.{uuid.uuid4().hex}.tmp")
             mode: t.Optional[int] = None
-            
+
             with contextlib.suppress(OSError):
                 mode = stat.S_IMODE(path.stat().st_mode)
             try:

@@ -898,7 +898,9 @@ class TestSync(object):
         ) as mock_peek:
             assert sync.checkpoint == 673877103
 
-        mock_peek.assert_called_once_with(sync.slot_name, limit=1)
+        mock_peek.assert_called_once_with(
+            sync.slot_name, upto_nchanges=1, limit=1
+        )
         # the healed value is persisted so we only heal once
         with open(sync.checkpoint_file, "r") as fp:
             assert int(fp.read().split()[0]) == 673877103
