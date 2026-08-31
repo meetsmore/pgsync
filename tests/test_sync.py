@@ -10,6 +10,7 @@ from mock import ANY, call, patch
 
 from pgsync.base import Base, Payload
 from pgsync.exc import (
+    CheckpointError,
     InvalidTGOPError,
     PrimaryKeyNotFoundError,
     RDSError,
@@ -877,6 +878,87 @@ class TestSync(object):
             assert "Cannot assign a None value to checkpoint" == str(
                 excinfo.value
             )
+
+    @pytest.mark.parametrize("content", ["", "\n   \n"])
+    def test_checkpoint_corrupt_file_heals_from_slot(self, sync, content):
+        """A corrupt checkpoint file is healed from the replication slot.
+
+        A truncate-then-write killed mid-write leaves a 0 byte file
+        behind. Resume from the oldest change still pending in the slot
+        rather than crash-looping or resyncing from scratch.
+        """
+        with open(sync.checkpoint_file, "w") as fp:
+            fp.write(content)
+        sync._checkpoint = None
+
+        with patch.object(
+            sync,
+            "logical_slot_peek_changes",
+            return_value=[ROW("data", 673877104)],
+        ) as mock_peek:
+            assert sync.checkpoint == 673877103
+
+        mock_peek.assert_called_once_with(
+            sync.slot_name, upto_nchanges=1, limit=1
+        )
+        # the healed value is persisted so we only heal once
+        with open(sync.checkpoint_file, "r") as fp:
+            assert int(fp.read().split()[0]) == 673877103
+
+    def test_checkpoint_corrupt_file_raises_when_slot_is_empty(self, sync):
+        """Never silently resync: an unhealable checkpoint must raise."""
+        with open(sync.checkpoint_file, "w") as fp:
+            fp.write("")
+        sync._checkpoint = None
+
+        with patch.object(sync, "logical_slot_peek_changes", return_value=[]):
+            with pytest.raises(CheckpointError) as excinfo:
+                sync.checkpoint
+        assert "has no pending changes" in str(excinfo.value)
+
+    def test_checkpoint_corrupt_file_raises_when_peek_fails(self, sync):
+        with open(sync.checkpoint_file, "w") as fp:
+            fp.write("")
+        sync._checkpoint = None
+
+        with patch.object(
+            sync,
+            "logical_slot_peek_changes",
+            side_effect=Exception("connection lost"),
+        ):
+            with pytest.raises(CheckpointError) as excinfo:
+                sync.checkpoint
+        assert "failed" in str(excinfo.value)
+
+    def test_checkpoint_write_is_atomic(self, sync):
+        """A failed write must leave the previous checkpoint intact."""
+        sync.checkpoint = 1234
+
+        with patch("pgsync.sync.os.replace", side_effect=OSError("boom")):
+            with pytest.raises(OSError):
+                sync.checkpoint = 5678
+
+        sync._checkpoint = None
+        assert sync.checkpoint == 1234
+        assert self._temp_files(sync) == []
+
+    def test_checkpoint_write_leaves_no_temp_files(self, sync):
+        sync.checkpoint = 1234
+        sync.checkpoint = 5678
+        sync._checkpoint = None
+        assert sync.checkpoint == 5678
+        assert self._temp_files(sync) == []
+
+    @staticmethod
+    def _temp_files(sync) -> t.List[str]:
+        dirname: str = os.path.dirname(sync.checkpoint_file) or "."
+        basename: str = os.path.basename(sync.checkpoint_file)
+        return [
+            filename
+            for filename in os.listdir(dirname)
+            if filename.startswith(f"{basename}.")
+            and filename.endswith(".tmp")
+        ]
 
     def test__payload_data(self, sync):
         payload = Payload(
